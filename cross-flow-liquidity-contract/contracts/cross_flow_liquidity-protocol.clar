@@ -105,3 +105,58 @@
 
 (define-private (get-balance (token principal))
     (unwrap! (contract-call? token get-balance contract-caller) u0))
+    ;; Public functions
+(define-public (execute-cross-chain-swap
+    (source-amount uint)
+    (min-output uint)
+    (path (list 5 uint))
+    (target-chain uint))
+    (let (
+        (route (get-optimal-route source-amount path))
+    )
+    (asserts! (is-valid-route route) ERR-INVALID-POOL)
+    (asserts! (>= (get-output-amount route) min-output) ERR-SLIPPAGE-EXCEEDED)
+    
+    (match (process-route route)
+        success (begin
+            (update-reserves route)
+            (emit-swap-event route)
+            (ok success))
+        error (err error))))
+
+(define-public (add-liquidity 
+    (pool-id uint)
+    (amount-x uint)
+    (amount-y uint)
+    (min-lp-tokens uint))
+    (let (
+        (pool (unwrap! (map-get? liquidity-pools pool-id) ERR-INVALID-POOL))
+        (lp-tokens-to-mint (calculate-lp-tokens amount-x amount-y pool))
+    )
+    (asserts! (>= lp-tokens-to-mint min-lp-tokens) ERR-SLIPPAGE-EXCEEDED)
+    (process-liquidity-addition pool-id amount-x amount-y lp-tokens-to-mint)))
+
+(define-public (create-pool 
+    (token-x principal)
+    (token-y principal)
+    (chain-id uint))
+    (let ((pool-id (len (keys liquidity-pools))))
+        (asserts! (is-eq tx-sender (var-get protocol-owner)) ERR-NOT-AUTHORIZED)
+        (map-set liquidity-pools pool-id {
+            token-x: token-x,
+            token-y: token-y,
+            reserve-x: u0,
+            reserve-y: u0,
+            chain-id: chain-id,
+            last-update: (unwrap! (get-block-info? time u0) u0)
+        })
+        (ok pool-id)))
+
+;; Read-only functions
+(define-read-only (get-pool-info (pool-id uint))
+    (map-get? liquidity-pools pool-id))
+
+(define-read-only (get-exchange-rate (pool-id uint))
+    (let ((pool (unwrap! (map-get? liquidity-pools pool-id) u0)))
+        (/ (* (get reserve-y pool) u1000000) (get reserve-x pool))))
+
