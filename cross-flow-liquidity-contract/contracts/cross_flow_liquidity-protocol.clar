@@ -56,3 +56,52 @@
         path: (list 5 uint)
     }
 )
+
+;; Helper functions
+(define-private (find-minimum (a uint) (b uint))
+    (if (<= a b) a b))
+
+(define-private (get-pool-depth (pool-id uint))
+    (default-to u0 (map-get? pool-depths pool-id)))
+
+(define-private (get-chain-gas-cost (chain-id uint))
+    (default-to u0 (map-get? chain-gas-prices chain-id)))
+
+(define-private (calculate-square-root (n uint))
+    (let ((x (/ n u2)))
+        (if (is-eq x u0)
+            n
+            (/ (+ x (/ n x)) u2))))
+
+(define-private (calculate-lp-tokens (amount-x uint) (amount-y uint) (pool {token-x: principal, token-y: principal, reserve-x: uint, reserve-y: uint, chain-id: uint, last-update: uint}))
+    (let ((total-supply (var-get total-volume)))
+        (if (is-eq total-supply u0)
+            (calculate-square-root (* amount-x amount-y))
+            (find-minimum
+                (* amount-x (/ total-supply (get reserve-x pool)))
+                (* amount-y (/ total-supply (get reserve-y pool)))))))
+
+(define-private (update-pool-state (pool-id uint))
+    (let ((pool (unwrap! (map-get? liquidity-pools pool-id) false))
+          (current-time (get-block-info? time u0)))
+        (match current-time
+            time (begin
+                (map-set liquidity-pools pool-id 
+                    (merge pool {last-update: time}))
+                true)
+            error false)))
+
+(define-private (verify-pool-constraints (pool-id uint))
+    (let ((pool (unwrap! (map-get? liquidity-pools pool-id) false)))
+        (and
+            (> (get reserve-x pool) u0)
+            (> (get reserve-y pool) u0)
+            (verify-balance-constraints pool))))
+
+(define-private (verify-balance-constraints (pool {token-x: principal, token-y: principal, reserve-x: uint, reserve-y: uint, chain-id: uint, last-update: uint}))
+    (and
+        (>= (get-balance (get token-x pool)) (get reserve-x pool))
+        (>= (get-balance (get token-y pool)) (get reserve-y pool))))
+
+(define-private (get-balance (token principal))
+    (unwrap! (contract-call? token get-balance contract-caller) u0))
